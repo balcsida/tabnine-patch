@@ -10,10 +10,11 @@ Automatically patches `tabnine.mjs` to handle "prompt is too long" errors by imp
 
 ## Installation
 
-Run this command in your terminal:
+Run these commands in your terminal:
 
 ```bash
-curl -sSL https://github.dev.global.tesco.org/gist/HU901131/7bd5f903e98f7a4a9ce0f314c2d88f6d/raw/tabnine-token-patch.sh | bash
+git clone https://github.dev.global.tesco.org/gist/7bd5f903e98f7a4a9ce0f314c2d88f6d.git tabnine-patch
+node tabnine-patch/tabnine-token-patch.mjs
 ```
 
 ## Post-installation
