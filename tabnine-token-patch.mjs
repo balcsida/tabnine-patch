@@ -99,22 +99,23 @@ function applyPatch() {
     console.log('  - maxAttempts retry already applied');
   }
 
-  // Patch 3: Guard analytics send against missing tabnineHost
+  // Patch 3: Resolve tabnineHost from settings when missing in config
   // Fixes "tabnineHost is required" error during extension install/enable
+  // by reading the host from settings.json as a fallback, so the analytics event still gets sent
   if (!patchedContent.includes(ANALYTICS_PATCH_MARKER)) {
     const analyticsSendPattern = 'async send(e){if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{let n=`${this.config.getTabnineHost()';
     if (patchedContent.includes(analyticsSendPattern)) {
       patchedContent = patchedContent.replace(
         analyticsSendPattern,
-        'async send(e){/*ANALYTICS_HOST_GUARD*/if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{if(!this.config.tabnineHost)return;let n=`${this.config.getTabnineHost()'
+        'async send(e){/*ANALYTICS_HOST_GUARD*/if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{if(!this.config.tabnineHost){try{let _o=await import("node:os"),_p=await import("node:path"),_f=await import("node:fs"),_c=JSON.parse(_f.readFileSync(_p.join(_o.homedir(),".tabnine/agent","settings.json"),"utf8"));if(_c.general?.tabnineHost)this.config.tabnineHost=_c.general.tabnineHost;else return;}catch{return;}}let n=`${this.config.getTabnineHost()'
       );
       patchCount++;
-      console.log('  ✓ Added analytics tabnineHost guard');
+      console.log('  ✓ Added analytics tabnineHost settings fallback');
     } else {
       console.error('  ✗ Could not find analytics send pattern');
     }
   } else {
-    console.log('  - Analytics tabnineHost guard already applied');
+    console.log('  - Analytics tabnineHost settings fallback already applied');
   }
 
   if (patchCount === 0) {
