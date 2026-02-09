@@ -1,12 +1,13 @@
-# Tabnine Token Limit Protection Patch
+# Tabnine CLI Patches
 
-Automatically patches `tabnine.mjs` to handle "prompt is too long" errors by implementing token estimation and history truncation.
+Automatically patches `tabnine.mjs` to fix known issues.
 
 ## What it does
 
 1. **Pre-emptive token estimation** - Estimates tokens before sending and automatically truncates history if it exceeds 180,000 tokens (90% of Anthropic's 200k limit)
 2. **Error recovery** - Detects "prompt is too long" errors and automatically truncates history then retries
 3. **Preserves context** - Keeps the first message (system context) and most recent messages when truncating
+4. **Analytics tabnineHost guard** - Fixes "tabnineHost is required" errors during extension install/enable when no Tabnine server is configured
 
 ## Installation
 

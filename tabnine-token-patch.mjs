@@ -11,7 +11,8 @@ import { homedir } from 'os';
 
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
 const TARGET_FILE = 'tabnine.mjs';
-const PATCH_MARKER = 'TOKEN_LIMIT=180000';
+const TOKEN_PATCH_MARKER = 'TOKEN_LIMIT=180000';
+const ANALYTICS_PATCH_MARKER = 'ANALYTICS_HOST_GUARD';
 
 // Token limit protection code to inject
 const TOKEN_PROTECTION_CODE = `const TOKEN_LIMIT=180000,TOKEN_TRUNCATE_TARGET=140000,estimateHistoryTokens=(hist)=>{let tokens=0;for(const msg of hist){if(!msg.parts)continue;for(const part of msg.parts){if(typeof part.text==='string'){for(const ch of part.text){tokens+=ch.codePointAt(0)<=127?0.25:1.3;}}else{tokens+=JSON.stringify(part).length/4;}}}return Math.ceil(tokens);},truncateHistory=(hist,targetTokens)=>{if(hist.length<=2)return hist;const firstMsg=hist[0];let remaining=hist.slice(1);while(remaining.length>1&&estimateHistoryTokens([firstMsg,...remaining])>targetTokens){remaining=remaining.slice(1);}return[firstMsg,...remaining];};if(estimateHistoryTokens(s)>TOKEN_LIMIT){Ee.warn("Token limit protection: truncating history...");s=truncateHistory(s,TOKEN_TRUNCATE_TARGET);this.history=s.slice();}`;
@@ -50,9 +51,9 @@ function applyPatch() {
     process.exit(1);
   }
 
-  // Check if already patched
-  if (content.includes(PATCH_MARKER)) {
-    console.log(`Patch already applied to ${filePath}`);
+  // Check if all patches already applied
+  if (content.includes(TOKEN_PATCH_MARKER) && content.includes(ANALYTICS_PATCH_MARKER)) {
+    console.log(`All patches already applied to ${filePath}`);
     process.exit(0);
   }
 
@@ -67,16 +68,20 @@ function applyPatch() {
   let patchCount = 0;
 
   // Patch 1: Inject token limit protection after getHistory
-  const getHistoryPattern = 'let s=this.getHistory(!0);';
-  if (patchedContent.includes(getHistoryPattern)) {
-    patchedContent = patchedContent.replace(
-      getHistoryPattern,
-      getHistoryPattern + TOKEN_PROTECTION_CODE
-    );
-    patchCount++;
-    console.log('  ✓ Injected token limit protection');
+  if (!patchedContent.includes(TOKEN_PATCH_MARKER)) {
+    const getHistoryPattern = 'let s=this.getHistory(!0);';
+    if (patchedContent.includes(getHistoryPattern)) {
+      patchedContent = patchedContent.replace(
+        getHistoryPattern,
+        getHistoryPattern + TOKEN_PROTECTION_CODE
+      );
+      patchCount++;
+      console.log('  ✓ Injected token limit protection');
+    } else {
+      console.error('  ✗ Could not find getHistory pattern');
+    }
   } else {
-    console.error('  ✗ Could not find getHistory pattern');
+    console.log('  - Token limit protection already applied');
   }
 
   // Patch 2: Increase maxAttempts for retry
@@ -88,8 +93,28 @@ function applyPatch() {
     );
     patchCount++;
     console.log('  ✓ Increased maxAttempts for retry');
-  } else {
+  } else if (!patchedContent.includes('m=f3r.maxAttempts+1')) {
     console.error('  ✗ Could not find maxAttempts pattern');
+  } else {
+    console.log('  - maxAttempts retry already applied');
+  }
+
+  // Patch 3: Guard analytics send against missing tabnineHost
+  // Fixes "tabnineHost is required" error during extension install/enable
+  if (!patchedContent.includes(ANALYTICS_PATCH_MARKER)) {
+    const analyticsSendPattern = 'async send(e){if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{let n=`${this.config.getTabnineHost()';
+    if (patchedContent.includes(analyticsSendPattern)) {
+      patchedContent = patchedContent.replace(
+        analyticsSendPattern,
+        'async send(e){/*ANALYTICS_HOST_GUARD*/if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{if(!this.config.tabnineHost)return;let n=`${this.config.getTabnineHost()'
+      );
+      patchCount++;
+      console.log('  ✓ Added analytics tabnineHost guard');
+    } else {
+      console.error('  ✗ Could not find analytics send pattern');
+    }
+  } else {
+    console.log('  - Analytics tabnineHost guard already applied');
   }
 
   if (patchCount === 0) {
@@ -100,7 +125,7 @@ function applyPatch() {
   // Write patched file
   writeFileSync(filePath, patchedContent);
 
-  console.log(`\nPatch applied successfully! (${patchCount}/2 patches)`);
+  console.log(`\nPatch applied successfully! (${patchCount} patches)`);
   console.log(`Backup saved to: ${backupPath}`);
   console.log('Restart Tabnine CLI to activate the changes.');
 }
