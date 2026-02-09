@@ -5,42 +5,23 @@
  * Usage: node tabnine-token-patch.mjs
  */
 
-import { readFileSync, writeFileSync, copyFileSync, readdirSync } from 'fs';
+import { readFileSync, writeFileSync, copyFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { createHash } from 'crypto';
 
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
 const TARGET_FILE = 'tabnine.mjs';
+const SUPPORTED_VERSION = '0.3.21';
+const EXPECTED_CHECKSUM = 'daf72ca6cd726e2be7a733decf9d8ef65fbcf77a40deae62979f61ddcf5a681e';
 const TOKEN_PATCH_MARKER = 'TOKEN_LIMIT=180000';
 const ANALYTICS_PATCH_MARKER = 'ANALYTICS_HOST_GUARD';
 
 // Token limit protection code to inject
 const TOKEN_PROTECTION_CODE = `const TOKEN_LIMIT=180000,TOKEN_TRUNCATE_TARGET=140000,estimateHistoryTokens=(hist)=>{let tokens=0;for(const msg of hist){if(!msg.parts)continue;for(const part of msg.parts){if(typeof part.text==='string'){for(const ch of part.text){tokens+=ch.codePointAt(0)<=127?0.25:1.3;}}else{tokens+=JSON.stringify(part).length/4;}}}return Math.ceil(tokens);},truncateHistory=(hist,targetTokens)=>{if(hist.length<=2)return hist;const firstMsg=hist[0];let remaining=hist.slice(1);while(remaining.length>1&&estimateHistoryTokens([firstMsg,...remaining])>targetTokens){remaining=remaining.slice(1);}return[firstMsg,...remaining];};if(estimateHistoryTokens(s)>TOKEN_LIMIT){Ee.warn("Token limit protection: truncating history...");s=truncateHistory(s,TOKEN_TRUNCATE_TARGET);this.history=s.slice();}`;
 
-function findLatestBundle() {
-  try {
-    const bundles = readdirSync(TABNINE_DIR)
-      .filter(f => /^\d+\.\d+\.\d+$/.test(f))
-      .sort((a, b) => {
-        const [aMajor, aMinor, aPatch] = a.split('.').map(Number);
-        const [bMajor, bMinor, bPatch] = b.split('.').map(Number);
-        return (aMajor - bMajor) || (aMinor - bMinor) || (aPatch - bPatch);
-      });
-    return bundles[bundles.length - 1];
-  } catch (e) {
-    return null;
-  }
-}
-
 function applyPatch() {
-  // Find latest bundle
-  const latestBundle = findLatestBundle();
-  if (!latestBundle) {
-    console.error(`Error: No Tabnine bundle found in ${TABNINE_DIR}`);
-    process.exit(1);
-  }
-
-  const filePath = join(TABNINE_DIR, latestBundle, TARGET_FILE);
+  const filePath = join(TABNINE_DIR, SUPPORTED_VERSION, TARGET_FILE);
 
   // Read file
   let content;
@@ -48,6 +29,7 @@ function applyPatch() {
     content = readFileSync(filePath, 'utf8');
   } catch (e) {
     console.error(`Error: ${filePath} not found`);
+    console.error(`This patcher only supports Tabnine CLI version ${SUPPORTED_VERSION}.`);
     process.exit(1);
   }
 
@@ -55,6 +37,16 @@ function applyPatch() {
   if (content.includes(TOKEN_PATCH_MARKER) && content.includes(ANALYTICS_PATCH_MARKER)) {
     console.log(`All patches already applied to ${filePath}`);
     process.exit(0);
+  }
+
+  // Verify checksum of unpatched file
+  const checksum = createHash('sha256').update(content).digest('hex');
+  if (checksum !== EXPECTED_CHECKSUM) {
+    console.error(`Error: Checksum mismatch for ${filePath}`);
+    console.error(`  Expected: ${EXPECTED_CHECKSUM}`);
+    console.error(`  Got:      ${checksum}`);
+    console.error('The file may have been modified or belongs to an unsupported version.');
+    process.exit(1);
   }
 
   console.log(`Patching ${filePath}...`);
