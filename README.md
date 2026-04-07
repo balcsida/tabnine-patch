@@ -1,13 +1,6 @@
 # Tabnine CLI Patches
 
-Automatically patches `tabnine.mjs` to fix known issues.
-
-## What it does
-
-1. **Pre-emptive token estimation** - Estimates tokens before sending and automatically truncates history if it exceeds 180,000 tokens (90% of Anthropic's 200k limit)
-2. **Error recovery** - Detects "prompt is too long" errors and automatically truncates history then retries
-3. **Preserves context** - Keeps the first message (system context) and most recent messages when truncating
-4. **Analytics tabnineHost guard** - Fixes "tabnineHost is required" errors during extension install/enable when no Tabnine server is configured
+Automatically patches `tabnine.mjs` to use `AGENTS.md` instead of `TABNINE.md` as the context file, so the same file works across multiple AI coding tools. Also enables checkpointing for session recovery.
 
 ## Installation
 
@@ -28,3 +21,18 @@ Restart Tabnine CLI to activate the changes.
 - The patch is applied to the latest Tabnine bundle in `~/.tabnine/agent/.bundles/`
 - This patch will need to be re-applied after Tabnine updates to a new bundle version
 - Running the script multiple times is safe - it detects if the patch is already applied
+- Checkpointing and subagents are enabled in `~/.tabnine/agent/settings.json` (backup saved as `settings.json.bak`)
+
+## Checkpointing
+
+The patcher enables Tabnine's built-in checkpointing feature (inherited from Gemini CLI):
+
+- **`/restore`** — Lists and restores file-level checkpoints (shadow git snapshots taken before each file modification)
+- **`/chat save <tag>`** — Save the current conversation as a named checkpoint
+- **`/chat resume <tag>`** — Resume a conversation from a saved checkpoint
+- **`/chat list`** — List all saved conversation checkpoints
+- **`/chat delete <tag>`** — Delete a conversation checkpoint
+
+## Subagents
+
+The patcher enables the experimental subagents feature, allowing Tabnine to spawn local and remote sub-agents for parallel task execution. Note: this is an experimental feature that uses YOLO mode for subagents.
