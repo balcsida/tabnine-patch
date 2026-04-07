@@ -7,7 +7,7 @@ Automatically patches `tabnine.mjs` to use `AGENTS.md` instead of `TABNINE.md` a
 Run these commands in your terminal:
 
 ```bash
-git clone https://github.dev.global.tesco.org/gist/7bd5f903e98f7a4a9ce0f314c2d88f6d.git tabnine-patch
+git clone https://github.com/balcsida/tabnine-patch.git
 node tabnine-patch/tabnine-token-patch.mjs
 ```
 
