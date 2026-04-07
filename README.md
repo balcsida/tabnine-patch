@@ -15,6 +15,10 @@ node tabnine-patch/tabnine-token-patch.mjs
 
 Restart Tabnine CLI to activate the changes.
 
+## Compatibility
+
+This patcher is compatible with **Tabnine CLI v0.5.3**. Other versions may not work due to checksum validation.
+
 ## Notes
 
 - A backup of the original file is saved as `tabnine.mjs.bak`
