@@ -1,27 +1,24 @@
 #!/usr/bin/env node
 /**
  * Tabnine Patch
- * Patches tabnine.mjs to:
+ * Patches the active Tabnine bundle to:
  * - Use AGENTS.md instead of TABNINE.md as the context file
- * - Pre-emptively estimate and truncate token history to avoid "prompt is too long" errors
- * - Enable checkpointing (shadow git snapshots + conversation checkpoints)
+ * - Allow MCP tools annotated as read-only in read-only mode
+ * - Enable checkpointing and experimental subagents in settings.json
  *
  * Usage: node tabnine-token-patch.mjs
  */
 
 import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { createHash } from 'crypto';
 
 import {
   AGENTS_MD_MARKER,
-  TOKEN_PATCH_MARKER,
   MCP_READONLY_MARKER,
   findAgentsMdReplacements,
-  findTokenInjectionSite,
-  buildTokenProtectionCode,
   addMcpReadOnlyRule,
 } from './src/patcher.mjs';
 
@@ -51,16 +48,14 @@ function applyPatch(version) {
     return false;
   }
 
-  const hasAgentsMarker = content.includes(AGENTS_MD_MARKER);
-  const hasTokenMarker = content.includes(TOKEN_PATCH_MARKER);
-  if (hasAgentsMarker && hasTokenMarker) {
-    console.log(`${version}: all patches already applied`);
+  if (content.includes(AGENTS_MD_MARKER)) {
+    console.log(`${version}: bundle already patched`);
     return true;
   }
 
   const checksum = createHash('sha256').update(content).digest('hex');
   const expected = KNOWN_CHECKSUMS[version];
-  if (expected && !hasAgentsMarker && !hasTokenMarker && checksum !== expected) {
+  if (expected && checksum !== expected) {
     const msg = `${version}: checksum mismatch (got ${checksum.slice(0, 12)}…, expected ${expected.slice(0, 12)}…)`;
     if (STRICT) {
       console.error(`${msg} — refusing to patch (--strict)`);
@@ -70,54 +65,25 @@ function applyPatch(version) {
   }
 
   const replacements = findAgentsMdReplacements(content);
-  const injection = findTokenInjectionSite(content);
-
-  if (!hasAgentsMarker && replacements.length === 0) {
+  if (replacements.length === 0) {
     console.error(`${version}: no TABNINE.md identifiers found`);
-    return false;
-  }
-  if (!hasTokenMarker && !injection) {
-    console.error(`${version}: no getHistory injection site found`);
     return false;
   }
 
   console.log(`Patching ${filePath}${DRY_RUN ? ' (dry-run)' : ''}…`);
 
   let patched = content;
-  let patchCount = 0;
-
-  if (!hasAgentsMarker) {
-    let count = 0;
-    for (const [pattern, replacement] of replacements) {
-      if (patched.includes(pattern)) {
-        patched = patched.replace(pattern, replacement);
-        count++;
-      }
+  let count = 0;
+  for (const [pattern, replacement] of replacements) {
+    if (patched.includes(pattern)) {
+      patched = patched.replace(pattern, replacement);
+      count++;
     }
-    if (count > 0) {
-      patchCount++;
-      console.log(`  Replaced TABNINE.md with AGENTS.md (${count}/${replacements.length} sites)`);
-    }
-  } else {
-    console.log('  AGENTS.md preference already applied');
   }
-
-  if (!hasTokenMarker) {
-    const code = buildTokenProtectionCode(injection.historyVar);
-    patched = patched.replace(injection.pattern, injection.pattern + code);
-    patchCount++;
-    console.log(`  Injected token limit protection (history var: ${injection.historyVar})`);
-  } else {
-    console.log('  Token limit protection already applied');
-  }
-
-  if (patchCount === 0) {
-    console.error(`${version}: no patches applied`);
-    return false;
-  }
+  console.log(`  Replaced TABNINE.md with AGENTS.md (${count}/${replacements.length} sites)`);
 
   if (DRY_RUN) {
-    console.log(`${version}: ${patchCount} patches would apply (dry-run, no files written)`);
+    console.log(`${version}: would write bundle (dry-run)`);
     return true;
   }
 
@@ -126,7 +92,7 @@ function applyPatch(version) {
     copyFileSync(filePath, backupPath);
   }
   writeFileSync(filePath, patched);
-  console.log(`${version}: ${patchCount} patches applied (backup at ${backupPath})`);
+  console.log(`${version}: bundle patched (backup at ${backupPath})`);
   return true;
 }
 
