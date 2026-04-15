@@ -3,7 +3,6 @@
 Patches the **active** Tabnine CLI bundle to:
 
 - Use `AGENTS.md` instead of `TABNINE.md` as the context file (so the same file works across multiple AI coding tools).
-- Pre-emptively truncate conversation history before it overflows the model token limit.
 - Allow MCP tools annotated as read-only to run in read-only mode.
 - Enable checkpointing (session recovery) and the experimental subagents feature.
 
