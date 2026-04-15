@@ -4,11 +4,12 @@ Guidance for AI agents working in this repository.
 
 ## Overview
 
-Node.js patcher for the Tabnine CLI (`tabnine.mjs`). Applies binary patches to the bundled Tabnine agent to:
+Node.js patcher for the Tabnine CLI (`tabnine.mjs`). Targets the **active** bundle only (per `~/.tabnine/agent/.bundles/.active`) and applies:
 
-- Use `AGENTS.md` as the context file instead of `TABNINE.md`.
-- Pre-emptively estimate and truncate conversation history to avoid "prompt is too long" errors.
-- Enable checkpointing and subagents via `settings.json`.
+- `AGENTS.md` as the context file instead of `TABNINE.md` (bundle string patch).
+- Pre-emptive history truncation to avoid "prompt is too long" errors (bundle JS injection).
+- An MCP-readonly rule appended to `policies/read-only.toml` so MCP tools annotated `readOnlyHint = true` are allowed in read-only mode.
+- Checkpointing and experimental subagents via `settings.json`.
 
 ## Running the Patcher
 
@@ -18,7 +19,7 @@ node tabnine-token-patch.mjs --dry-run  # show what would change, write nothing
 node tabnine-token-patch.mjs --strict   # refuse unknown checksums (no auto-detect fallback)
 ```
 
-The script walks every `~/.tabnine/agent/.bundles/<version>/tabnine.mjs` and applies patches via auto-detection. Markers (`AGENTS_MD_MARKER`, `TOKEN_PATCH_MARKER`) make re-runs idempotent.
+The script reads `~/.tabnine/agent/.bundles/.active`, patches that one bundle's `tabnine.mjs` and `policies/read-only.toml`, and updates `~/.tabnine/agent/settings.json`. Markers (`AGENTS_MD_MARKER`, `TOKEN_PATCH_MARKER`, `MCP_READONLY_MARKER`) make re-runs idempotent.
 
 ## Architecture
 
@@ -31,7 +32,8 @@ The minified Tabnine bundle is patched via regex auto-detection, not a per-versi
 
 - `findAgentsMdReplacements` finds every `<id>="TABNINE.md"` and the `return["TABNINE.md"]` literal.
 - `findTokenInjectionSite` finds the `[this.history.push(…);]let <var>=this.getHistory(!0);` site and captures the history variable name.
-- `buildTokenProtectionCode` serialises the runtime helpers via `Function.prototype.toString` so the in-bundle code matches what the unit tests cover.
+- `buildTokenProtectionCode` serialises the runtime helpers (`estimateHistoryTokens`, `truncateHistory`) via `Function.prototype.toString` so the in-bundle code matches what the unit tests cover.
+- `addMcpReadOnlyRule` appends an `[[rule]]` to a `read-only.toml` body that allows MCP tools whose schema sets `readOnlyHint = true`.
 
 `KNOWN_CHECKSUMS` in the CLI is now advisory: a mismatch is a warning unless `--strict` is passed.
 
