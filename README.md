@@ -17,7 +17,7 @@ Restart Tabnine CLI to activate the changes.
 
 ## Compatibility
 
-This patcher is compatible with **Tabnine CLI v0.5.3**. Other versions may not work due to checksum validation.
+Verified against **Tabnine CLI v0.5.3** and **v0.12.1**. Other versions are auto-detected via regex; pass `--strict` to require a known checksum, `--dry-run` to preview without writing.
 
 ## Notes
 
