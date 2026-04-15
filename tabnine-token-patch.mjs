@@ -5,93 +5,87 @@
  * - Use AGENTS.md instead of TABNINE.md as the context file
  * - Pre-emptively estimate and truncate token history to avoid "prompt is too long" errors
  * - Enable checkpointing (shadow git snapshots + conversation checkpoints)
+ *
  * Usage: node tabnine-token-patch.mjs
  */
 
 import { readFileSync, writeFileSync, copyFileSync, existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { homedir } from 'os';
 import { createHash } from 'crypto';
 
+import {
+  AGENTS_MD_MARKER,
+  TOKEN_PATCH_MARKER,
+  findAgentsMdReplacements,
+  findTokenInjectionSite,
+  buildTokenProtectionCode,
+} from './src/patcher.mjs';
+
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
 const TARGET_FILE = 'tabnine.mjs';
-const AGENTS_MD_MARKER = 'AGENTS_MD_PREFERRED';
-const TOKEN_PATCH_MARKER = 'TOKEN_LIMIT=180000';
 
-const tokenProtectionCode = (historyVar, logger) =>
-  `const TOKEN_LIMIT=180000,TOKEN_TRUNCATE_TARGET=140000,estimateHistoryTokens=(hist)=>{let tokens=0;for(const msg of hist){if(!msg.parts)continue;for(const part of msg.parts){if(typeof part.text==='string'){for(const ch of part.text){tokens+=ch.codePointAt(0)<=127?0.25:1.3;}}else{tokens+=JSON.stringify(part).length/4;}}}return Math.ceil(tokens);},truncateHistory=(hist,targetTokens)=>{if(hist.length<=2)return hist;const firstMsg=hist[0];let remaining=hist.slice(1);while(remaining.length>1&&estimateHistoryTokens([firstMsg,...remaining])>targetTokens){remaining=remaining.slice(1);}return[firstMsg,...remaining];};if(estimateHistoryTokens(${historyVar})>TOKEN_LIMIT){${logger}.warn("Token limit protection: truncating history...");${historyVar}=truncateHistory(${historyVar},TOKEN_TRUNCATE_TARGET);this.history=${historyVar}.slice();}`;
-
-// Per-version patch recipes. Obfuscated identifiers change between bundles.
-const VERSIONS = {
-  '0.5.3': {
-    checksum: 'd38639c91f9074cd9b34e98897f44b2efed677e2976c4804186ee6eaffdc72c7',
-    agentsMdReplacements: [
-      ['nUe="TABNINE.md"', `nUe="AGENTS.md"/*${AGENTS_MD_MARKER}*/`],
-      ['rPn="TABNINE.md"', 'rPn="AGENTS.md"'],
-      ['DMt="TABNINE.md"', 'DMt="AGENTS.md"'],
-      ['return["TABNINE.md"]', 'return["AGENTS.md"]'],
-    ],
-    tokenInjection: {
-      pattern: 'let l=this.getHistory(!0);',
-      historyVar: 'l',
-      logger: 'Ee',
-    },
-  },
-  '0.12.1': {
-    checksum: '1d29d8835d2281cfea5436eb497b353cf8f7f7387a02afcef8d1b43af4793334',
-    agentsMdReplacements: [
-      ['ume="TABNINE.md"', `ume="AGENTS.md"/*${AGENTS_MD_MARKER}*/`],
-      ['$4e="TABNINE.md"', '$4e="AGENTS.md"'],
-      ['b3t="TABNINE.md"', 'b3t="AGENTS.md"'],
-      ['return["TABNINE.md"]', 'return["AGENTS.md"]'],
-    ],
-    tokenInjection: {
-      pattern: 'this.history.push(u);let f=this.getHistory(!0);',
-      historyVar: 'f',
-      logger: 'V',
-    },
-  },
+// Known-good SHA-256 checksums of unpatched bundles. Auto-detection is the
+// source of truth; these are advisory — a mismatch downgrades the run to a
+// warning unless --strict is passed.
+const KNOWN_CHECKSUMS = {
+  '0.5.3':  'd38639c91f9074cd9b34e98897f44b2efed677e2976c4804186ee6eaffdc72c7',
+  '0.12.1': '1d29d8835d2281cfea5436eb497b353cf8f7f7387a02afcef8d1b43af4793334',
 };
 
-function applyPatch(version, recipe) {
+const STRICT = process.argv.includes('--strict');
+const DRY_RUN = process.argv.includes('--dry-run');
+
+function applyPatch(version) {
   const filePath = join(TABNINE_DIR, version, TARGET_FILE);
 
   let content;
   try {
     content = readFileSync(filePath, 'utf8');
   } catch {
-    console.log(`Skipping ${version}: ${filePath} not found`);
+    console.log(`${version}: ${filePath} not found, skipping`);
     return false;
   }
 
-  if (content.includes(AGENTS_MD_MARKER) && content.includes(TOKEN_PATCH_MARKER)) {
+  const hasAgentsMarker = content.includes(AGENTS_MD_MARKER);
+  const hasTokenMarker = content.includes(TOKEN_PATCH_MARKER);
+  if (hasAgentsMarker && hasTokenMarker) {
     console.log(`${version}: all patches already applied`);
     return true;
   }
 
   const checksum = createHash('sha256').update(content).digest('hex');
-  const alreadyPatched = content.includes(AGENTS_MD_MARKER) || content.includes(TOKEN_PATCH_MARKER);
-  if (!alreadyPatched && checksum !== recipe.checksum) {
-    console.error(`${version}: checksum mismatch`);
-    console.error(`  Expected: ${recipe.checksum}`);
-    console.error(`  Got:      ${checksum}`);
-    console.error('  File may have been modified or this is an unrecognized build.');
+  const expected = KNOWN_CHECKSUMS[version];
+  if (expected && !hasAgentsMarker && !hasTokenMarker && checksum !== expected) {
+    const msg = `${version}: checksum mismatch (got ${checksum.slice(0, 12)}…, expected ${expected.slice(0, 12)}…)`;
+    if (STRICT) {
+      console.error(`${msg} — refusing to patch (--strict)`);
+      return false;
+    }
+    console.warn(`${msg} — proceeding via auto-detection`);
+  }
+
+  const replacements = findAgentsMdReplacements(content);
+  const injection = findTokenInjectionSite(content);
+
+  if (!hasAgentsMarker && replacements.length === 0) {
+    console.error(`${version}: no TABNINE.md identifiers found`);
+    return false;
+  }
+  if (!hasTokenMarker && !injection) {
+    console.error(`${version}: no getHistory injection site found`);
     return false;
   }
 
-  console.log(`Patching ${filePath}...`);
-
-  const backupPath = `${filePath}.bak`;
-  if (!existsSync(backupPath)) {
-    copyFileSync(filePath, backupPath);
-  }
+  console.log(`Patching ${filePath}${DRY_RUN ? ' (dry-run)' : ''}…`);
 
   let patched = content;
   let patchCount = 0;
 
-  if (!patched.includes(AGENTS_MD_MARKER)) {
+  if (!hasAgentsMarker) {
     let count = 0;
-    for (const [pattern, replacement] of recipe.agentsMdReplacements) {
+    for (const [pattern, replacement] of replacements) {
       if (patched.includes(pattern)) {
         patched = patched.replace(pattern, replacement);
         count++;
@@ -99,23 +93,17 @@ function applyPatch(version, recipe) {
     }
     if (count > 0) {
       patchCount++;
-      console.log(`  Replaced TABNINE.md with AGENTS.md (${count}/${recipe.agentsMdReplacements.length} patterns)`);
-    } else {
-      console.error('  Could not find any TABNINE.md patterns');
+      console.log(`  Replaced TABNINE.md with AGENTS.md (${count}/${replacements.length} sites)`);
     }
   } else {
     console.log('  AGENTS.md preference already applied');
   }
 
-  if (!patched.includes(TOKEN_PATCH_MARKER)) {
-    const { pattern, historyVar, logger } = recipe.tokenInjection;
-    if (patched.includes(pattern)) {
-      patched = patched.replace(pattern, pattern + tokenProtectionCode(historyVar, logger));
-      patchCount++;
-      console.log('  Injected token limit protection');
-    } else {
-      console.error('  Could not find getHistory injection pattern');
-    }
+  if (!hasTokenMarker) {
+    const code = buildTokenProtectionCode(injection.historyVar);
+    patched = patched.replace(injection.pattern, injection.pattern + code);
+    patchCount++;
+    console.log(`  Injected token limit protection (history var: ${injection.historyVar})`);
   } else {
     console.log('  Token limit protection already applied');
   }
@@ -125,8 +113,17 @@ function applyPatch(version, recipe) {
     return false;
   }
 
+  if (DRY_RUN) {
+    console.log(`${version}: ${patchCount} patches would apply (dry-run, no files written)`);
+    return true;
+  }
+
+  const backupPath = `${filePath}.bak`;
+  if (!existsSync(backupPath)) {
+    copyFileSync(filePath, backupPath);
+  }
   writeFileSync(filePath, patched);
-  console.log(`${version}: patch applied (${patchCount} patches, backup at ${backupPath})`);
+  console.log(`${version}: ${patchCount} patches applied (backup at ${backupPath})`);
   return true;
 }
 
@@ -137,12 +134,17 @@ function enableCheckpointing() {
   try {
     settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
   } catch {
-    console.error(`Error: Could not read ${settingsPath}`);
+    console.error(`settings.json: could not read ${settingsPath}`);
     return false;
   }
 
   if (settings.general?.checkpointing?.enabled === true && settings.experimental?.enableAgents === true) {
     console.log('settings.json: checkpointing and subagents already enabled');
+    return true;
+  }
+
+  if (DRY_RUN) {
+    console.log('settings.json: would enable checkpointing and subagents (dry-run)');
     return true;
   }
 
@@ -153,7 +155,6 @@ function enableCheckpointing() {
 
   settings.general = settings.general || {};
   settings.general.checkpointing = { enabled: true };
-
   settings.experimental = settings.experimental || {};
   settings.experimental.enableAgents = true;
 
@@ -171,22 +172,21 @@ function main() {
     process.exit(1);
   }
 
-  const known = installed.filter(v => VERSIONS[v]);
-  const unknown = installed.filter(v => !VERSIONS[v]);
-
-  if (known.length === 0) {
-    console.error(`No supported Tabnine CLI version found in ${TABNINE_DIR}`);
+  // Patch every bundle that contains a tabnine.mjs. Auto-detection makes the
+  // VERSIONS allow-list unnecessary; unknown versions just get a checksum
+  // warning.
+  const candidates = installed.filter((v) =>
+    existsSync(join(TABNINE_DIR, v, TARGET_FILE)),
+  );
+  if (candidates.length === 0) {
+    console.error(`No tabnine.mjs found under ${TABNINE_DIR}`);
     console.error(`Installed: ${installed.join(', ') || '(none)'}`);
-    console.error(`Supported: ${Object.keys(VERSIONS).join(', ')}`);
     process.exit(1);
   }
 
   let patched = 0;
-  for (const version of known) {
-    if (applyPatch(version, VERSIONS[version])) patched++;
-  }
-  for (const version of unknown) {
-    console.log(`Skipping ${version}: unsupported version`);
+  for (const version of candidates) {
+    if (applyPatch(version)) patched++;
   }
 
   enableCheckpointing();
@@ -197,4 +197,7 @@ function main() {
   console.log('\nRestart Tabnine CLI to activate the changes.');
 }
 
-main();
+// Only run when invoked directly, not when imported by tests.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}
