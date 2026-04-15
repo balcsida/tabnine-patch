@@ -7,8 +7,10 @@ import {
   findAgentsMdReplacements,
   findTokenInjectionSite,
   buildTokenProtectionCode,
+  addMcpReadOnlyRule,
   AGENTS_MD_MARKER,
   TOKEN_PATCH_MARKER,
+  MCP_READONLY_MARKER,
 } from './patcher.mjs';
 
 // --- estimateHistoryTokens --------------------------------------------------
@@ -238,4 +240,62 @@ test('built injection survives a syntax check via new Function', () => {
     // Wrap in a function so `this` and `return` are allowed.
     new Function('h', code + '; return h;');
   });
+});
+
+// --- addMcpReadOnlyRule -----------------------------------------------------
+
+const sampleReadOnlyToml = `# Comment header.
+
+[[rule]]
+toolName = "glob"
+decision = "allow"
+priority = 50
+
+[[rule]]
+toolName = "read_file"
+decision = "allow"
+priority = 50
+`;
+
+test('appends an MCP-readonly rule with the marker', () => {
+  const out = addMcpReadOnlyRule(sampleReadOnlyToml);
+  assert.ok(out.includes(MCP_READONLY_MARKER), 'marker missing');
+  assert.ok(out.includes('mcpName = "*"'), 'mcpName="*" missing');
+  assert.ok(out.includes('readOnlyHint = true'), 'readOnlyHint=true missing');
+  assert.ok(out.includes('decision = "allow"'), 'decision=allow missing');
+});
+
+test('preserves existing rules verbatim', () => {
+  const out = addMcpReadOnlyRule(sampleReadOnlyToml);
+  assert.ok(out.includes('toolName = "glob"'));
+  assert.ok(out.includes('toolName = "read_file"'));
+});
+
+test('appends rule at the end (after existing rules)', () => {
+  const out = addMcpReadOnlyRule(sampleReadOnlyToml);
+  const lastReadFileIdx = out.lastIndexOf('toolName = "read_file"');
+  const newRuleIdx = out.indexOf('mcpName = "*"');
+  assert.ok(newRuleIdx > lastReadFileIdx, 'new rule should be after existing rules');
+});
+
+test('is idempotent: running twice yields same content', () => {
+  const once = addMcpReadOnlyRule(sampleReadOnlyToml);
+  const twice = addMcpReadOnlyRule(once);
+  assert.equal(once, twice);
+});
+
+test('does not add the rule if marker already present', () => {
+  const already = sampleReadOnlyToml + `\n# ${MCP_READONLY_MARKER}\n[[rule]]\nfoo = "bar"\n`;
+  const out = addMcpReadOnlyRule(already);
+  assert.equal(out, already);
+});
+
+test('produces a valid TOML body (no syntax landmines)', () => {
+  // Loose check: every [[rule]] block should be followed by at least one
+  // key=value line before the next blank-line break.
+  const out = addMcpReadOnlyRule(sampleReadOnlyToml);
+  const blocks = out.split(/\[\[rule\]\]/).slice(1);
+  for (const block of blocks) {
+    assert.match(block, /^[\s\S]*?\w+\s*=\s*\S/, 'block has no key=value');
+  }
 });

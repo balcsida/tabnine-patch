@@ -4,6 +4,7 @@
 
 export const AGENTS_MD_MARKER = 'AGENTS_MD_PREFERRED';
 export const TOKEN_PATCH_MARKER = 'TOKEN_LIMIT=180000';
+export const MCP_READONLY_MARKER = 'MCP_READONLY_PATCH';
 
 export const DEFAULT_TOKEN_LIMIT = 180000;
 export const DEFAULT_TOKEN_TARGET = 140000;
@@ -95,6 +96,26 @@ export function findTokenInjectionSite(content) {
   }
 
   return null;
+}
+
+// Append a [[rule]] to a read-only.toml policy file that allows MCP tools
+// annotated with `readOnlyHint = true`. Idempotent via the marker comment.
+// Mirrors the rule already present in plan.toml at priority 70 (which there
+// is `ask_user`); in read-only mode the user has already opted into a
+// restricted profile, so we go straight to `allow`.
+export function addMcpReadOnlyRule(content) {
+  if (content.includes(MCP_READONLY_MARKER)) return content;
+  const rule = [
+    '',
+    `# ${MCP_READONLY_MARKER}: allow MCP tools annotated as read-only.`,
+    '[[rule]]',
+    'mcpName = "*"',
+    'toolAnnotations = { readOnlyHint = true }',
+    'decision = "allow"',
+    'priority = 50',
+    '',
+  ].join('\n');
+  return content.endsWith('\n') ? content + rule : content + '\n' + rule;
 }
 
 export function buildTokenProtectionCode(historyVar, {
