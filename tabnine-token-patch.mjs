@@ -18,13 +18,16 @@ import { createHash } from 'crypto';
 import {
   AGENTS_MD_MARKER,
   TOKEN_PATCH_MARKER,
+  MCP_READONLY_MARKER,
   findAgentsMdReplacements,
   findTokenInjectionSite,
   buildTokenProtectionCode,
+  addMcpReadOnlyRule,
 } from './src/patcher.mjs';
 
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
 const TARGET_FILE = 'tabnine.mjs';
+const READ_ONLY_POLICY = join('policies', 'read-only.toml');
 
 // Known-good SHA-256 checksums of unpatched bundles. Auto-detection is the
 // source of truth; these are advisory — a mismatch downgrades the run to a
@@ -127,6 +130,38 @@ function applyPatch(version) {
   return true;
 }
 
+function patchReadOnlyPolicy(version) {
+  const policyPath = join(TABNINE_DIR, version, READ_ONLY_POLICY);
+
+  let content;
+  try {
+    content = readFileSync(policyPath, 'utf8');
+  } catch {
+    console.log(`${version}: ${policyPath} not found, skipping policy patch`);
+    return false;
+  }
+
+  if (content.includes(MCP_READONLY_MARKER)) {
+    console.log(`${version}: read-only policy already expanded`);
+    return true;
+  }
+
+  const updated = addMcpReadOnlyRule(content);
+
+  if (DRY_RUN) {
+    console.log(`${version}: would expand read-only policy (dry-run)`);
+    return true;
+  }
+
+  const backupPath = `${policyPath}.bak`;
+  if (!existsSync(backupPath)) {
+    copyFileSync(policyPath, backupPath);
+  }
+  writeFileSync(policyPath, updated);
+  console.log(`${version}: expanded read-only policy (backup at ${backupPath})`);
+  return true;
+}
+
 function enableCheckpointing() {
   const settingsPath = join(homedir(), '.tabnine/agent/settings.json');
 
@@ -163,35 +198,37 @@ function enableCheckpointing() {
   return true;
 }
 
-function main() {
-  let installed = [];
+function activeBundleVersion() {
+  const activePath = join(TABNINE_DIR, '.active');
+  let active;
   try {
-    installed = readdirSync(TABNINE_DIR);
+    active = readFileSync(activePath, 'utf8').trim();
   } catch {
+    return null;
+  }
+  if (!active) return null;
+  if (!existsSync(join(TABNINE_DIR, active, TARGET_FILE))) return null;
+  return active;
+}
+
+function main() {
+  if (!existsSync(TABNINE_DIR)) {
     console.error(`Error: ${TABNINE_DIR} not found`);
     process.exit(1);
   }
 
-  // Patch every bundle that contains a tabnine.mjs. Auto-detection makes the
-  // VERSIONS allow-list unnecessary; unknown versions just get a checksum
-  // warning.
-  const candidates = installed.filter((v) =>
-    existsSync(join(TABNINE_DIR, v, TARGET_FILE)),
-  );
-  if (candidates.length === 0) {
-    console.error(`No tabnine.mjs found under ${TABNINE_DIR}`);
-    console.error(`Installed: ${installed.join(', ') || '(none)'}`);
+  const version = activeBundleVersion();
+  if (!version) {
+    console.error(`No active Tabnine bundle (missing or invalid ${join(TABNINE_DIR, '.active')})`);
     process.exit(1);
   }
+  console.log(`Active bundle: ${version}`);
 
-  let patched = 0;
-  for (const version of candidates) {
-    if (applyPatch(version)) patched++;
-  }
-
+  const ok = applyPatch(version);
+  patchReadOnlyPolicy(version);
   enableCheckpointing();
 
-  if (patched === 0) {
+  if (!ok) {
     process.exit(1);
   }
   console.log('\nRestart Tabnine CLI to activate the changes.');
