@@ -7,6 +7,7 @@ Guidance for AI agents working in this repository.
 Node.js patcher for the Tabnine CLI (`tabnine.mjs`). Targets the **active** bundle only (per `~/.tabnine/agent/.bundles/.active`) and applies:
 
 - `AGENTS.md` as the context file instead of `TABNINE.md` (bundle string patch).
+- A `gemini-extension.json` fallback inside `loadExtensionConfig`, so upstream Gemini CLI extensions install unchanged.
 - An MCP-readonly rule appended to `policies/read-only.toml` so MCP tools annotated `readOnlyHint = true` are allowed in read-only mode.
 - Checkpointing, experimental subagents, and `security.blockGitExtensions = false` (to allow `tabnine extensions install <git-url>`) via `settings.json`.
 
@@ -32,6 +33,7 @@ Two files:
 The minified Tabnine bundle is patched via regex auto-detection, not a per-version recipe table:
 
 - `findAgentsMdReplacements` finds every `<id>="TABNINE.md"` and the `return["TABNINE.md"]` literal.
+- `findGeminiExtensionFallback` matches the minified `loadExtensionConfig` guard and wraps it so a missing `tabnine-extension.json` falls back to `gemini-extension.json` before throwing.
 - `addMcpReadOnlyRule` appends an `[[rule]]` to a `read-only.toml` body that allows MCP tools whose schema sets `readOnlyHint = true`.
 
 `KNOWN_CHECKSUMS` in the CLI is advisory: a mismatch is a warning unless `--strict` is passed.
