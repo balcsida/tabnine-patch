@@ -7,6 +7,7 @@ Patches the **active** Tabnine CLI bundle to:
 - Enable checkpointing (session recovery) and the experimental subagents feature.
 - Allow installing extensions from remote Git sources (e.g. `tabnine extensions install https://github.com/...`).
 - Fall back to `gemini-extension.json` when a repo ships only the upstream Gemini CLI extension manifest.
+- Silence `Failed to send analytics event …: tabnineHost is required` errors emitted on every extension install/enable/uninstall.
 
 ## Installation
 
