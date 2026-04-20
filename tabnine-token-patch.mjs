@@ -4,7 +4,7 @@
  * Patches the active Tabnine bundle to:
  * - Use AGENTS.md instead of TABNINE.md as the context file
  * - Allow MCP tools annotated as read-only in read-only mode
- * - Enable checkpointing and experimental subagents in settings.json
+ * - Enable checkpointing, experimental subagents, and remote extension installs in settings.json
  *
  * Usage: node tabnine-token-patch.mjs
  */
@@ -128,7 +128,7 @@ function patchReadOnlyPolicy(version) {
   return true;
 }
 
-function enableCheckpointing() {
+function applyAgentSettings() {
   const settingsPath = join(homedir(), '.tabnine/agent/settings.json');
 
   let settings;
@@ -139,13 +139,18 @@ function enableCheckpointing() {
     return false;
   }
 
-  if (settings.general?.checkpointing?.enabled === true && settings.experimental?.enableAgents === true) {
-    console.log('settings.json: checkpointing and subagents already enabled');
+  const alreadyApplied =
+    settings.general?.checkpointing?.enabled === true &&
+    settings.experimental?.enableAgents === true &&
+    settings.security?.blockGitExtensions === false;
+
+  if (alreadyApplied) {
+    console.log('settings.json: checkpointing, subagents, and remote extensions already enabled');
     return true;
   }
 
   if (DRY_RUN) {
-    console.log('settings.json: would enable checkpointing and subagents (dry-run)');
+    console.log('settings.json: would enable checkpointing, subagents, and remote extensions (dry-run)');
     return true;
   }
 
@@ -158,9 +163,11 @@ function enableCheckpointing() {
   settings.general.checkpointing = { enabled: true };
   settings.experimental = settings.experimental || {};
   settings.experimental.enableAgents = true;
+  settings.security = settings.security || {};
+  settings.security.blockGitExtensions = false;
 
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-  console.log('settings.json: enabled checkpointing and subagents');
+  console.log('settings.json: enabled checkpointing, subagents, and remote extensions');
   return true;
 }
 
@@ -192,7 +199,7 @@ function main() {
 
   const ok = applyPatch(version);
   patchReadOnlyPolicy(version);
-  enableCheckpointing();
+  applyAgentSettings();
 
   if (!ok) {
     process.exit(1);

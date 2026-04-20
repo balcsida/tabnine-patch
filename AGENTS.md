@@ -8,7 +8,7 @@ Node.js patcher for the Tabnine CLI (`tabnine.mjs`). Targets the **active** bund
 
 - `AGENTS.md` as the context file instead of `TABNINE.md` (bundle string patch).
 - An MCP-readonly rule appended to `policies/read-only.toml` so MCP tools annotated `readOnlyHint = true` are allowed in read-only mode.
-- Checkpointing and experimental subagents via `settings.json`.
+- Checkpointing, experimental subagents, and `security.blockGitExtensions = false` (to allow `tabnine extensions install <git-url>`) via `settings.json`.
 
 History truncation is **not** patched: Tabnine 0.12.1 has a native `tryCompressChat` step that runs before every `callModel` and compresses at the configurable `model.compressionThreshold` (default 0.7 of context).
 

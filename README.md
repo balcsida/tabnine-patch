@@ -5,6 +5,7 @@ Patches the **active** Tabnine CLI bundle to:
 - Use `AGENTS.md` instead of `TABNINE.md` as the context file (so the same file works across multiple AI coding tools).
 - Allow MCP tools annotated as read-only to run in read-only mode.
 - Enable checkpointing (session recovery) and the experimental subagents feature.
+- Allow installing extensions from remote Git sources (e.g. `tabnine extensions install https://github.com/...`).
 
 ## Installation
 
@@ -49,6 +50,10 @@ The patcher enables Tabnine's built-in checkpointing feature (inherited from Gem
 ## Subagents
 
 The patcher enables the experimental subagents feature, allowing Tabnine to spawn local and remote sub-agents for parallel task execution. Note: this is an experimental feature that uses YOLO mode for subagents.
+
+## Remote extension installs
+
+Tabnine defaults `security.blockGitExtensions` to `true`, which refuses `tabnine extensions install <git-url>` with *"Installing extensions from remote sources is disallowed by your current settings."* The patcher flips this to `false` in `settings.json` so installs from Git (and GitHub releases) work. To restrict to specific sources instead, set `security.allowedExtensions` to a list of regex patterns — that takes precedence over `blockGitExtensions`.
 
 ## Read-only policy expansion
 
