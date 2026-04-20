@@ -4,8 +4,10 @@ import assert from 'node:assert/strict';
 import {
   findAgentsMdReplacements,
   addMcpReadOnlyRule,
+  findGeminiExtensionFallback,
   AGENTS_MD_MARKER,
   MCP_READONLY_MARKER,
+  GEMINI_EXT_FALLBACK_MARKER,
 } from './patcher.mjs';
 
 // --- findAgentsMdReplacements ----------------------------------------------
@@ -107,4 +109,50 @@ test('produces a valid TOML body (no syntax landmines)', () => {
   for (const block of blocks) {
     assert.match(block, /^[\s\S]*?\w+\s*=\s*\S/, 'block has no key=value');
   }
+});
+
+// --- findGeminiExtensionFallback -------------------------------------------
+
+const sampleLoadExt =
+  'async loadExtensionConfig(e){let r=Ip.join(e,Eoe);' +
+  'if(!c_.existsSync(r))throw new Error(`Configuration file not found at ${r}`);' +
+  'try{let n=await c_.promises.readFile(r,"utf-8")}';
+
+test('wraps loadExtensionConfig with a gemini-extension.json fallback', () => {
+  const repls = findGeminiExtensionFallback(sampleLoadExt);
+  assert.equal(repls.length, 1);
+  const [pattern, replacement] = repls[0];
+  assert.ok(pattern.startsWith('async loadExtensionConfig(e)'));
+  assert.ok(replacement.includes('"gemini-extension.json"'));
+  assert.ok(replacement.includes(GEMINI_EXT_FALLBACK_MARKER));
+  // Still throws when neither file exists.
+  assert.ok(replacement.includes('Configuration file not found at'));
+});
+
+test('preserves the original minified identifiers', () => {
+  const src =
+    'async loadExtensionConfig($x){let q_=A2a.join($x,fNa);' +
+    'if(!z7.existsSync(q_))throw new Error(`Configuration file not found at ${q_}`);try{}';
+  const [[, replacement]] = findGeminiExtensionFallback(src);
+  assert.ok(replacement.includes('A2a.join($x,"gemini-extension.json")'));
+  assert.ok(replacement.includes('q_=_gef'));
+  assert.ok(replacement.includes('z7.existsSync'));
+});
+
+test('applying the replacement produces valid JS that keeps the try-block', () => {
+  const [[pattern, replacement]] = findGeminiExtensionFallback(sampleLoadExt);
+  const out = sampleLoadExt.replace(pattern, replacement);
+  // The `try{` that originally followed the guard must still be there.
+  assert.ok(out.includes('try{let n=await c_.promises.readFile'));
+  // The injected block closes with a matching brace before `try{`.
+  assert.match(out, /\}\/\*GEMINI_EXT_FALLBACK\*\/try\{/);
+});
+
+test('is idempotent: returns [] when marker already present', () => {
+  const already = sampleLoadExt + `/*${GEMINI_EXT_FALLBACK_MARKER}*/`;
+  assert.deepEqual(findGeminiExtensionFallback(already), []);
+});
+
+test('returns [] when loadExtensionConfig pattern is absent', () => {
+  assert.deepEqual(findGeminiExtensionFallback('unrelated content'), []);
 });
