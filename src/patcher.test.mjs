@@ -4,8 +4,12 @@ import assert from 'node:assert/strict';
 import {
   findAgentsMdReplacements,
   addMcpReadOnlyRule,
+  findGeminiExtensionFallback,
+  findAnalyticsHostGuard,
   AGENTS_MD_MARKER,
   MCP_READONLY_MARKER,
+  GEMINI_EXT_FALLBACK_MARKER,
+  ANALYTICS_HOST_GUARD_MARKER,
 } from './patcher.mjs';
 
 // --- findAgentsMdReplacements ----------------------------------------------
@@ -107,4 +111,91 @@ test('produces a valid TOML body (no syntax landmines)', () => {
   for (const block of blocks) {
     assert.match(block, /^[\s\S]*?\w+\s*=\s*\S/, 'block has no key=value');
   }
+});
+
+// --- findGeminiExtensionFallback -------------------------------------------
+
+const sampleLoadExt =
+  'async loadExtensionConfig(e){let r=Ip.join(e,Eoe);' +
+  'if(!c_.existsSync(r))throw new Error(`Configuration file not found at ${r}`);' +
+  'try{let n=await c_.promises.readFile(r,"utf-8")}';
+
+test('wraps loadExtensionConfig with a gemini-extension.json fallback', () => {
+  const repls = findGeminiExtensionFallback(sampleLoadExt);
+  assert.equal(repls.length, 1);
+  const [pattern, replacement] = repls[0];
+  assert.ok(pattern.startsWith('async loadExtensionConfig(e)'));
+  assert.ok(replacement.includes('"gemini-extension.json"'));
+  assert.ok(replacement.includes(GEMINI_EXT_FALLBACK_MARKER));
+  // Still throws when neither file exists.
+  assert.ok(replacement.includes('Configuration file not found at'));
+});
+
+test('preserves the original minified identifiers', () => {
+  const src =
+    'async loadExtensionConfig($x){let q_=A2a.join($x,fNa);' +
+    'if(!z7.existsSync(q_))throw new Error(`Configuration file not found at ${q_}`);try{}';
+  const [[, replacement]] = findGeminiExtensionFallback(src);
+  assert.ok(replacement.includes('A2a.join($x,"gemini-extension.json")'));
+  assert.ok(replacement.includes('q_=_gef'));
+  assert.ok(replacement.includes('z7.existsSync'));
+});
+
+test('applying the replacement produces valid JS that keeps the try-block', () => {
+  const [[pattern, replacement]] = findGeminiExtensionFallback(sampleLoadExt);
+  const out = sampleLoadExt.replace(pattern, replacement);
+  // The `try{` that originally followed the guard must still be there.
+  assert.ok(out.includes('try{let n=await c_.promises.readFile'));
+  // The injected block closes with a matching brace before `try{`.
+  assert.match(out, /\}\/\*GEMINI_EXT_FALLBACK\*\/try\{/);
+});
+
+test('is idempotent: returns [] when marker already present', () => {
+  const already = sampleLoadExt + `/*${GEMINI_EXT_FALLBACK_MARKER}*/`;
+  assert.deepEqual(findGeminiExtensionFallback(already), []);
+});
+
+test('returns [] when loadExtensionConfig pattern is absent', () => {
+  assert.deepEqual(findGeminiExtensionFallback('unrelated content'), []);
+});
+
+// --- findAnalyticsHostGuard -------------------------------------------------
+
+const sampleSend =
+  'async send(e){if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{' +
+  'let r=this.config.getTabnineHost().replace(/\\/$/,""),n=`${r}/notify/v1`;' +
+  '}catch(r){console.error?.(`Failed to send analytics event ${e.kind}:`,r)}}';
+
+test('guards send() with a tabnineHost presence check', () => {
+  const repls = findAnalyticsHostGuard(sampleSend);
+  assert.equal(repls.length, 1);
+  const [pattern, replacement] = repls[0];
+  assert.ok(pattern.startsWith('async send(e){'));
+  assert.ok(replacement.includes('this.config.tabnineHost'));
+  assert.ok(replacement.includes(ANALYTICS_HOST_GUARD_MARKER));
+});
+
+test('short-circuits before entering the try-block (no getTabnineHost call)', () => {
+  const [[pattern, replacement]] = findAnalyticsHostGuard(sampleSend);
+  const patched = sampleSend.replace(pattern, replacement);
+  // The `try{` must still follow the guard expression.
+  assert.match(patched, /&&this\.config\.tabnineHost[^)]*\)try\{/);
+  // The original TABNINE_ANALYTICS_DISABLED env check is preserved.
+  assert.ok(patched.includes('process.env.TABNINE_ANALYTICS_DISABLED'));
+});
+
+test('preserves the original minified parameter name', () => {
+  const src =
+    'async send($7){if(process.env.TABNINE_ANALYTICS_DISABLED!=="true")try{}catch(r){}}';
+  const [[, replacement]] = findAnalyticsHostGuard(src);
+  assert.ok(replacement.startsWith('async send($7){'));
+});
+
+test('is idempotent: returns [] when marker already present', () => {
+  const already = sampleSend + `/*${ANALYTICS_HOST_GUARD_MARKER}*/`;
+  assert.deepEqual(findAnalyticsHostGuard(already), []);
+});
+
+test('returns [] when the send pattern is absent', () => {
+  assert.deepEqual(findAnalyticsHostGuard('nothing here'), []);
 });

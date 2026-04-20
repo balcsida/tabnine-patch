@@ -3,6 +3,8 @@
 
 export const AGENTS_MD_MARKER = 'AGENTS_MD_PREFERRED';
 export const MCP_READONLY_MARKER = 'MCP_READONLY_PATCH';
+export const GEMINI_EXT_FALLBACK_MARKER = 'GEMINI_EXT_FALLBACK';
+export const ANALYTICS_HOST_GUARD_MARKER = 'ANALYTICS_HOST_GUARD';
 
 export function findAgentsMdReplacements(content) {
   const replacements = [];
@@ -49,4 +51,42 @@ export function addMcpReadOnlyRule(content) {
     '',
   ].join('\n');
   return content.endsWith('\n') ? content + rule : content + '\n' + rule;
+}
+
+// Tabnine is a Gemini CLI fork and uses the same extension config schema,
+// just renamed to `tabnine-extension.json`. Patch `loadExtensionConfig` to
+// fall back to `gemini-extension.json` when the Tabnine file is missing, so
+// upstream Gemini extensions install unchanged. Returns [[pattern, replacement]]
+// if the unpatched site is found, or [] if already patched / not present.
+export function findGeminiExtensionFallback(content) {
+  if (content.includes(GEMINI_EXT_FALLBACK_MARKER)) return [];
+  const re = /async loadExtensionConfig\(([\w$]+)\)\{let ([\w$]+)=([\w$]+)\.join\(\1,([\w$]+)\);if\(!([\w$]+)\.existsSync\(\2\)\)throw new Error\(`Configuration file not found at \$\{\2\}`\);/;
+  const m = content.match(re);
+  if (!m) return [];
+  const [full, arg, rvar, pathLib, fnameVar, fsLib] = m;
+  const replacement =
+    `async loadExtensionConfig(${arg}){let ${rvar}=${pathLib}.join(${arg},${fnameVar});` +
+    `if(!${fsLib}.existsSync(${rvar})){` +
+    `let _gef=${pathLib}.join(${arg},"gemini-extension.json");` +
+    `if(${fsLib}.existsSync(_gef))${rvar}=_gef;` +
+    `else throw new Error(\`Configuration file not found at \${${rvar}}\`);` +
+    `}/*${GEMINI_EXT_FALLBACK_MARKER}*/`;
+  return [[full, replacement]];
+}
+
+// The extension manager builds its own telemetry config without piping through
+// `general.tabnineHost`, so every extension install/enable/uninstall triggers
+// `Failed to send analytics event …: Error: tabnineHost is required` spam.
+// Guard the analytics `send` method so it bails out silently when no host has
+// been configured on the telemetry instance, instead of throwing and catching.
+export function findAnalyticsHostGuard(content) {
+  if (content.includes(ANALYTICS_HOST_GUARD_MARKER)) return [];
+  const re = /async send\(([\w$]+)\)\{if\(process\.env\.TABNINE_ANALYTICS_DISABLED!=="true"\)try\{/;
+  const m = content.match(re);
+  if (!m) return [];
+  const [full, arg] = m;
+  const replacement =
+    `async send(${arg}){if(process.env.TABNINE_ANALYTICS_DISABLED!=="true"` +
+    `&&this.config.tabnineHost/*${ANALYTICS_HOST_GUARD_MARKER}*/)try{`;
+  return [[full, replacement]];
 }

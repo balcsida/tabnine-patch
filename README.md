@@ -5,6 +5,9 @@ Patches the **active** Tabnine CLI bundle to:
 - Use `AGENTS.md` instead of `TABNINE.md` as the context file (so the same file works across multiple AI coding tools).
 - Allow MCP tools annotated as read-only to run in read-only mode.
 - Enable checkpointing (session recovery) and the experimental subagents feature.
+- Allow installing extensions from remote Git sources (e.g. `tabnine extensions install https://github.com/...`).
+- Fall back to `gemini-extension.json` when a repo ships only the upstream Gemini CLI extension manifest.
+- Silence `Failed to send analytics event …: tabnineHost is required` errors emitted on every extension install/enable/uninstall.
 
 ## Installation
 
@@ -49,6 +52,14 @@ The patcher enables Tabnine's built-in checkpointing feature (inherited from Gem
 ## Subagents
 
 The patcher enables the experimental subagents feature, allowing Tabnine to spawn local and remote sub-agents for parallel task execution. Note: this is an experimental feature that uses YOLO mode for subagents.
+
+## Remote extension installs
+
+Tabnine defaults `security.blockGitExtensions` to `true`, which refuses `tabnine extensions install <git-url>` with *"Installing extensions from remote sources is disallowed by your current settings."* The patcher flips this to `false` in `settings.json` so installs from Git (and GitHub releases) work. To restrict to specific sources instead, set `security.allowedExtensions` to a list of regex patterns — that takes precedence over `blockGitExtensions`.
+
+## gemini-extension.json fallback
+
+Tabnine is a fork of Gemini CLI and reads the same extension config schema, just renamed to `tabnine-extension.json`. Most extensions in the wild still ship only `gemini-extension.json` (e.g. `atlassian/atlassian-mcp-server`). The patcher wraps `loadExtensionConfig` in the bundle so a missing `tabnine-extension.json` transparently falls back to `gemini-extension.json` — upstream Gemini extensions install without modification.
 
 ## Read-only policy expansion
 
