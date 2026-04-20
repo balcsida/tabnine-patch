@@ -4,6 +4,7 @@
  * Patches the active Tabnine bundle to:
  * - Use AGENTS.md instead of TABNINE.md as the context file
  * - Fall back to gemini-extension.json when tabnine-extension.json is missing
+ * - Silence extension analytics errors when no tabnineHost is configured
  * - Allow MCP tools annotated as read-only in read-only mode
  * - Enable checkpointing, experimental subagents, and remote extension installs in settings.json
  *
@@ -20,9 +21,11 @@ import {
   AGENTS_MD_MARKER,
   MCP_READONLY_MARKER,
   GEMINI_EXT_FALLBACK_MARKER,
+  ANALYTICS_HOST_GUARD_MARKER,
   findAgentsMdReplacements,
   addMcpReadOnlyRule,
   findGeminiExtensionFallback,
+  findAnalyticsHostGuard,
 } from './src/patcher.mjs';
 
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
@@ -53,7 +56,8 @@ function applyPatch(version) {
 
   const agentsMdRepls = findAgentsMdReplacements(content);
   const geminiRepls = findGeminiExtensionFallback(content);
-  const replacements = [...agentsMdRepls, ...geminiRepls];
+  const analyticsRepls = findAnalyticsHostGuard(content);
+  const replacements = [...agentsMdRepls, ...geminiRepls, ...analyticsRepls];
 
   if (replacements.length === 0) {
     console.log(`${version}: bundle already patched`);
@@ -64,7 +68,8 @@ function applyPatch(version) {
   // once any patch marker is present.
   const pristine =
     !content.includes(AGENTS_MD_MARKER) &&
-    !content.includes(GEMINI_EXT_FALLBACK_MARKER);
+    !content.includes(GEMINI_EXT_FALLBACK_MARKER) &&
+    !content.includes(ANALYTICS_HOST_GUARD_MARKER);
   if (pristine) {
     const checksum = createHash('sha256').update(content).digest('hex');
     const expected = KNOWN_CHECKSUMS[version];
@@ -91,6 +96,9 @@ function applyPatch(version) {
   }
   if (geminiRepls.length > 0) {
     console.log('  Added gemini-extension.json fallback to loadExtensionConfig');
+  }
+  if (analyticsRepls.length > 0) {
+    console.log('  Guarded analytics send() against missing tabnineHost');
   }
 
   if (DRY_RUN) {
