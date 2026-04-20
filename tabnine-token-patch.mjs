@@ -3,6 +3,7 @@
  * Tabnine Patch
  * Patches the active Tabnine bundle to:
  * - Use AGENTS.md instead of TABNINE.md as the context file
+ * - Fall back to gemini-extension.json when tabnine-extension.json is missing
  * - Allow MCP tools annotated as read-only in read-only mode
  * - Enable checkpointing, experimental subagents, and remote extension installs in settings.json
  *
@@ -18,8 +19,10 @@ import { createHash } from 'crypto';
 import {
   AGENTS_MD_MARKER,
   MCP_READONLY_MARKER,
+  GEMINI_EXT_FALLBACK_MARKER,
   findAgentsMdReplacements,
   addMcpReadOnlyRule,
+  findGeminiExtensionFallback,
 } from './src/patcher.mjs';
 
 const TABNINE_DIR = join(homedir(), '.tabnine/agent/.bundles');
@@ -48,39 +51,47 @@ function applyPatch(version) {
     return false;
   }
 
-  if (content.includes(AGENTS_MD_MARKER)) {
+  const agentsMdRepls = findAgentsMdReplacements(content);
+  const geminiRepls = findGeminiExtensionFallback(content);
+  const replacements = [...agentsMdRepls, ...geminiRepls];
+
+  if (replacements.length === 0) {
     console.log(`${version}: bundle already patched`);
     return true;
   }
 
-  const checksum = createHash('sha256').update(content).digest('hex');
-  const expected = KNOWN_CHECKSUMS[version];
-  if (expected && checksum !== expected) {
-    const msg = `${version}: checksum mismatch (got ${checksum.slice(0, 12)}…, expected ${expected.slice(0, 12)}…)`;
-    if (STRICT) {
-      console.error(`${msg} — refusing to patch (--strict)`);
-      return false;
+  // Checksum is advisory and only meaningful against a pristine bundle; skip
+  // once any patch marker is present.
+  const pristine =
+    !content.includes(AGENTS_MD_MARKER) &&
+    !content.includes(GEMINI_EXT_FALLBACK_MARKER);
+  if (pristine) {
+    const checksum = createHash('sha256').update(content).digest('hex');
+    const expected = KNOWN_CHECKSUMS[version];
+    if (expected && checksum !== expected) {
+      const msg = `${version}: checksum mismatch (got ${checksum.slice(0, 12)}…, expected ${expected.slice(0, 12)}…)`;
+      if (STRICT) {
+        console.error(`${msg} — refusing to patch (--strict)`);
+        return false;
+      }
+      console.warn(`${msg} — proceeding via auto-detection`);
     }
-    console.warn(`${msg} — proceeding via auto-detection`);
-  }
-
-  const replacements = findAgentsMdReplacements(content);
-  if (replacements.length === 0) {
-    console.error(`${version}: no TABNINE.md identifiers found`);
-    return false;
   }
 
   console.log(`Patching ${filePath}${DRY_RUN ? ' (dry-run)' : ''}…`);
 
   let patched = content;
-  let count = 0;
   for (const [pattern, replacement] of replacements) {
     if (patched.includes(pattern)) {
       patched = patched.replace(pattern, replacement);
-      count++;
     }
   }
-  console.log(`  Replaced TABNINE.md with AGENTS.md (${count}/${replacements.length} sites)`);
+  if (agentsMdRepls.length > 0) {
+    console.log(`  Replaced TABNINE.md with AGENTS.md (${agentsMdRepls.length} sites)`);
+  }
+  if (geminiRepls.length > 0) {
+    console.log('  Added gemini-extension.json fallback to loadExtensionConfig');
+  }
 
   if (DRY_RUN) {
     console.log(`${version}: would write bundle (dry-run)`);
